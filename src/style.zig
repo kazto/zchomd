@@ -55,9 +55,37 @@ pub const StyleList = struct {
 /// StyleTable holds style settings for tables.
 pub const StyleTable = struct {
     block: StyleBlock = .{},
-    center_separator: []const u8 = "+",
-    column_separator: []const u8 = "|",
-    row_separator: []const u8 = "-",
+    // Horizontal line
+    horizontal: []const u8 = "─",
+    // Vertical line
+    vertical: []const u8 = "│",
+    // Corners
+    top_left: []const u8 = "┌",
+    top_right: []const u8 = "┐",
+    bottom_left: []const u8 = "└",
+    bottom_right: []const u8 = "┘",
+    // T-junctions
+    top_mid: []const u8 = "┬",
+    bottom_mid: []const u8 = "┴",
+    left_mid: []const u8 = "├",
+    right_mid: []const u8 = "┤",
+    // Cross junction
+    mid_mid: []const u8 = "┼",
+};
+
+/// ASCII-only table style (for notty / piped output).
+pub const ascii_table: StyleTable = .{
+    .horizontal = "-",
+    .vertical = "|",
+    .top_left = "+",
+    .top_right = "+",
+    .bottom_left = "+",
+    .bottom_right = "+",
+    .top_mid = "+",
+    .bottom_mid = "+",
+    .left_mid = "+",
+    .right_mid = "+",
+    .mid_mid = "+",
 };
 
 /// StyleConfig is the top-level style configuration.
@@ -287,6 +315,7 @@ pub const notty: StyleConfig = .{
     .item = .{ .block_prefix = "• " },
     .enumeration = .{ .block_prefix = ". " },
     .task = .{ .ticked = "[x] ", .unticked = "[ ] " },
+    .table = ascii_table,
 };
 
 pub const ascii: StyleConfig = notty;

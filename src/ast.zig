@@ -13,6 +13,10 @@ pub const NodeKind = enum {
     code_block,
     thematic_break,
     html_block,
+    table,
+    table_head,
+    table_row,
+    table_cell,
 
     // Inline elements (children of paragraph, heading, etc.)
     text,
@@ -27,6 +31,9 @@ pub const NodeKind = enum {
     strikethrough,
     raw_html,
 };
+
+/// Column alignment for table cells.
+pub const Align = enum { none, left, center, right };
 
 pub const Node = struct {
     kind: NodeKind,
@@ -51,6 +58,9 @@ pub const Node = struct {
     // List item
     enumeration: u32 = 0,
     task_checked: ?bool = null,
+
+    // Table cell
+    col_align: Align = .none,
 
     // Whether this node is the first child of its parent
     is_first: bool = false,

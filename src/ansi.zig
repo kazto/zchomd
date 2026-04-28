@@ -192,6 +192,78 @@ pub fn wordWrap(allocator: std.mem.Allocator, text: []const u8, width: usize, in
     return result.toOwnedSlice(allocator);
 }
 
+/// Remove ANSI escape sequences from a string.
+/// Caller must free the returned slice.
+pub fn stripAnsi(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == '\x1b') {
+            i += 1;
+            while (i < s.len and !std.ascii.isAlphabetic(s[i])) : (i += 1) {}
+            if (i < s.len) i += 1;
+        } else {
+            try out.append(allocator, s[i]);
+            i += 1;
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+/// Compute the visible display width of a string, skipping ANSI escape sequences.
+/// CJK and other East Asian wide characters are counted as 2 columns.
+pub fn visibleWidth(s: []const u8) usize {
+    var width: usize = 0;
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == '\x1b') {
+            // Skip escape sequence: ESC [ ... <letter>
+            i += 1;
+            while (i < s.len and !std.ascii.isAlphabetic(s[i])) : (i += 1) {}
+            if (i < s.len) i += 1;
+        } else {
+            const b = s[i];
+            var cp: u21 = 0;
+            var char_len: usize = 1;
+            if (b < 0x80) {
+                cp = b;
+                char_len = 1;
+            } else if (b & 0xE0 == 0xC0 and i + 1 < s.len) {
+                cp = (@as(u21, b & 0x1F) << 6) | (s[i + 1] & 0x3F);
+                char_len = 2;
+            } else if (b & 0xF0 == 0xE0 and i + 2 < s.len) {
+                cp = (@as(u21, b & 0x0F) << 12) |
+                    (@as(u21, s[i + 1] & 0x3F) << 6) |
+                    (s[i + 2] & 0x3F);
+                char_len = 3;
+            } else if (b & 0xF8 == 0xF0 and i + 3 < s.len) {
+                cp = (@as(u21, b & 0x07) << 18) |
+                    (@as(u21, s[i + 1] & 0x3F) << 12) |
+                    (@as(u21, s[i + 2] & 0x3F) << 6) |
+                    (s[i + 3] & 0x3F);
+                char_len = 4;
+            }
+            i += char_len;
+            width += if (isWideCodepoint(cp)) 2 else 1;
+        }
+    }
+    return width;
+}
+
+fn isWideCodepoint(cp: u21) bool {
+    return (cp >= 0x1100 and cp <= 0x115F) or // Hangul Jamo
+        (cp >= 0x2E80 and cp <= 0x303F) or // CJK Radicals / Kangxi
+        (cp >= 0x3040 and cp <= 0xA4CF) or // Hiragana–Yi
+        (cp >= 0xAC00 and cp <= 0xD7AF) or // Hangul Syllables
+        (cp >= 0xF900 and cp <= 0xFAFF) or // CJK Compatibility Ideographs
+        (cp >= 0xFE10 and cp <= 0xFE1F) or // Vertical Forms
+        (cp >= 0xFE30 and cp <= 0xFE6F) or // CJK Compatibility Forms
+        (cp >= 0xFF01 and cp <= 0xFF60) or // Fullwidth ASCII / punctuation
+        (cp >= 0xFFE0 and cp <= 0xFFE6); // Fullwidth Signs
+}
+
 /// Write an indented block: prepend indent_token to each line.
 pub fn writeIndented(w: anytype, text: []const u8, indent_token: []const u8, margin: usize) !void {
     var lines = std.mem.splitScalar(u8, text, '\n');

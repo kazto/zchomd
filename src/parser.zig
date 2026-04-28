@@ -110,6 +110,15 @@ const Parser = struct {
         if (isIndentedCode(line, indent)) {
             return self.parseIndentedCode(indent);
         }
+        // GFM table: current line has '|' and next line is a separator row
+        if (std.mem.indexOfScalar(u8, stripped, '|') != null and
+            self.pos + 1 < self.lines.len)
+        {
+            const next_line = stripIndent(self.lines[self.pos + 1], indent);
+            if (isTableSeparator(next_line)) {
+                return self.parseTable(indent);
+            }
+        }
         return self.parseParagraph(indent);
     }
 
@@ -355,6 +364,68 @@ const Parser = struct {
         const raw = std.mem.trim(u8, text_buf.items, " \t");
         try parseInlineChildren(self.allocator, node, raw);
         return node;
+    }
+    fn parseTable(self: *Parser, indent: usize) !*ast.Node {
+        const table = try ast.Node.create(self.allocator, .table);
+
+        // ── Header row ────────────────────────────────────────────────────────
+        const head = try ast.Node.create(self.allocator, .table_head);
+        const header_line = stripIndent(self.current(), indent);
+        self.advance();
+        {
+            const cells = tableCellSplit(header_line);
+            var it = std.mem.splitScalar(u8, cells, '|');
+            while (it.next()) |raw| {
+                const text = std.mem.trim(u8, raw, " \t");
+                const cell = try ast.Node.create(self.allocator, .table_cell);
+                try parseInlineChildren(self.allocator, cell, text);
+                try head.appendChild(self.allocator, cell);
+            }
+        }
+        try table.appendChild(self.allocator, head);
+
+        // ── Separator row — extract column alignment ───────────────────────
+        const sep_line = stripIndent(self.current(), indent);
+        self.advance();
+        {
+            const cells = tableCellSplit(sep_line);
+            var it = std.mem.splitScalar(u8, cells, '|');
+            var col: usize = 0;
+            while (it.next()) |raw| : (col += 1) {
+                const text = std.mem.trim(u8, raw, " ");
+                if (text.len == 0) continue;
+                if (col < head.children.items.len) {
+                    head.children.items[col].col_align = tableAlignFrom(text);
+                }
+            }
+        }
+
+        // ── Body rows ─────────────────────────────────────────────────────────
+        while (!self.atEnd()) {
+            const line = self.current();
+            const stripped = stripIndent(line, indent);
+            if (isBlankLine(stripped)) break;
+            if (std.mem.indexOfScalar(u8, stripped, '|') == null) break;
+            self.advance();
+
+            const row = try ast.Node.create(self.allocator, .table_row);
+            const cells = tableCellSplit(stripped);
+            var it = std.mem.splitScalar(u8, cells, '|');
+            var col: usize = 0;
+            while (it.next()) |raw| : (col += 1) {
+                const text = std.mem.trim(u8, raw, " \t");
+                const cell = try ast.Node.create(self.allocator, .table_cell);
+                // Copy alignment from the corresponding header cell.
+                if (col < head.children.items.len) {
+                    cell.col_align = head.children.items[col].col_align;
+                }
+                try parseInlineChildren(self.allocator, cell, text);
+                try row.appendChild(self.allocator, cell);
+            }
+            try table.appendChild(self.allocator, row);
+        }
+
+        return table;
     }
 };
 
@@ -788,6 +859,46 @@ fn stripIndent(line: []const u8, n: usize) []const u8 {
         }
     }
     return line[i..];
+}
+
+/// Return true if `line` looks like a GFM table separator (`|:?-+:?|...`).
+fn isTableSeparator(line: []const u8) bool {
+    const s = std.mem.trim(u8, line, " \t");
+    if (std.mem.indexOfScalar(u8, s, '|') == null) return false;
+    if (std.mem.indexOfScalar(u8, s, '-') == null) return false;
+    const cells = tableCellSplit(s);
+    var it = std.mem.splitScalar(u8, cells, '|');
+    var found: usize = 0;
+    while (it.next()) |raw| {
+        const cell = std.mem.trim(u8, raw, " ");
+        if (cell.len == 0) continue;
+        const inner = std.mem.trim(u8, cell, ":");
+        if (inner.len == 0) return false;
+        for (inner) |c| {
+            if (c != '-') return false;
+        }
+        found += 1;
+    }
+    return found > 0;
+}
+
+/// Derive column alignment from a separator cell like `---`, `:---`, `---:`, `:---:`.
+fn tableAlignFrom(cell: []const u8) ast.Align {
+    if (cell.len == 0) return .none;
+    const left = cell[0] == ':';
+    const right = cell[cell.len - 1] == ':';
+    if (left and right) return .center;
+    if (right) return .right;
+    if (left) return .left;
+    return .none;
+}
+
+/// Strip leading/trailing `|` from a table row and return the inner cell string.
+fn tableCellSplit(line: []const u8) []const u8 {
+    var s = std.mem.trim(u8, line, " \t");
+    if (s.len > 0 and s[0] == '|') s = s[1..];
+    if (s.len > 0 and s[s.len - 1] == '|') s = s[0 .. s.len - 1];
+    return s;
 }
 
 fn listMarker(line: []const u8) ?MarkerInfo {

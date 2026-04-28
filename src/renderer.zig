@@ -9,6 +9,7 @@ pub const Options = struct {
     styles: style.StyleConfig = style.dark,
     word_wrap: usize = 80,
     preserve_newlines: bool = false,
+    use_kitty_text_sizing: bool = false,
 };
 
 pub const Renderer = struct {
@@ -57,6 +58,8 @@ const RenderContext = struct {
             .code_block => try self.renderCodeBlock(writer, node),
             .thematic_break => try self.renderThematicBreak(writer, node),
             .html_block => try self.renderHtmlBlock(writer, node),
+            .table => try self.renderTable(writer, node),
+            .table_head, .table_row, .table_cell => {},
             // Inline nodes are rendered by their parent context
             .text, .emphasis, .strong, .code_span, .link, .image,
             .auto_link, .strikethrough, .raw_html, .soft_break,
@@ -84,6 +87,12 @@ const RenderContext = struct {
 
     fn renderHeading(self: *RenderContext, writer: anytype, node: *ast.Node) anyerror!void {
         const s = self.opts().styles;
+        const use_kitty = self.opts().use_kitty_text_sizing;
+        const scale: usize = if (use_kitty) switch (node.level) {
+            1 => 3,
+            2 => 2,
+            else => 1,
+        } else 1;
 
         // Cascade: heading base + specific level style
         var heading_style = s.heading;
@@ -122,15 +131,39 @@ const RenderContext = struct {
         }
 
         // Word-wrap and write
+        const available_width = if (self.opts().word_wrap > self.indent) self.opts().word_wrap - self.indent else 0;
+        const wrap_width = if (scale > 1) available_width / scale else available_width;
+
         const wrapped = try ansi_util.wordWrap(
             self.allocator(),
             buf.items,
-            if (self.opts().word_wrap > self.indent) self.opts().word_wrap - self.indent else 0,
+            wrap_width,
             0,
         );
         defer self.allocator().free(wrapped);
 
-        try writeIndentedLines(writer, wrapped, self.indent);
+        if (scale > 1) {
+            var lines = std.mem.splitScalar(u8, wrapped, '\n');
+            var first = true;
+            while (lines.next()) |line| {
+                if (!first or line.len > 0) {
+                    for (0..self.indent) |_| try writer.writeByte(' ');
+
+                    const plain = try ansi_util.stripAnsi(self.allocator(), line);
+                    defer self.allocator().free(plain);
+
+                    const had_codes = try ansi_util.writeOpen(writer, heading_style.style);
+                    try writer.print("\x1b]66;s={d};{s}\x07", .{ scale, plain });
+                    if (had_codes) try ansi_util.writeReset(writer);
+
+                    // Add extra newlines for the height of scaled text
+                    for (0..scale) |_| try writer.writeByte('\n');
+                }
+                first = false;
+            }
+        } else {
+            try writeIndentedLines(writer, wrapped, self.indent);
+        }
 
         try ansi_util.writeStyled(writer, s.document.style, heading_style.style.block_suffix);
     }
@@ -329,6 +362,92 @@ const RenderContext = struct {
         try writer.writeByte('\n');
     }
 
+    fn renderTable(self: *RenderContext, writer: anytype, node: *ast.Node) anyerror!void {
+        if (node.children.items.len == 0) return;
+
+        // node.children[0] = table_head, [1..] = table_row nodes
+        const head = node.children.items[0];
+        const ncols = head.children.items.len;
+        if (ncols == 0) return;
+
+        const nrows = node.children.items.len;
+        const alloc = self.allocator();
+
+        // Render every cell's inline content to a flat string array.
+        // Index: ri * ncols + ci
+        const cell_bufs = try alloc.alloc(std.ArrayList(u8), nrows * ncols);
+        defer {
+            for (cell_bufs) |*b| b.deinit(alloc);
+            alloc.free(cell_bufs);
+        }
+        for (cell_bufs) |*b| b.* = .empty;
+
+        for (node.children.items, 0..) |row_node, ri| {
+            for (row_node.children.items, 0..) |cell, ci| {
+                if (ci >= ncols) break;
+                const idx = ri * ncols + ci;
+                // Header row: render with bold style.
+                const text_style = if (ri == 0)
+                    mergeStylePrimitive(self.opts().styles.text, self.opts().styles.strong)
+                else
+                    self.opts().styles.text;
+                for (cell.children.items) |inline_child| {
+                    try self.renderInlineToWriter(
+                        cell_bufs[idx].writer(alloc),
+                        inline_child,
+                        text_style,
+                    );
+                }
+            }
+        }
+
+        // Compute visible column widths.
+        const col_widths = try alloc.alloc(usize, ncols);
+        defer alloc.free(col_widths);
+        @memset(col_widths, 3); // minimum 3
+        for (0..nrows) |ri| {
+            for (0..ncols) |ci| {
+                const w = ansi_util.visibleWidth(cell_bufs[ri * ncols + ci].items);
+                if (w > col_widths[ci]) col_widths[ci] = w;
+            }
+        }
+
+        // Column alignments (from header cells).
+        const col_aligns = try alloc.alloc(ast.Align, ncols);
+        defer alloc.free(col_aligns);
+        for (head.children.items, 0..) |hcell, ci| {
+            col_aligns[ci] = hcell.col_align;
+        }
+
+        const ts = self.opts().styles.table;
+
+        try writer.writeByte('\n');
+
+        // Top border: ┌───┬───┐
+        try writeTableBorder(writer, col_widths, self.indent, ts, .top);
+
+        // Rows
+        for (node.children.items, 0..) |_, ri| {
+            for (0..self.indent) |_| try writer.writeByte(' ');
+            try writer.writeAll(ts.vertical);
+            for (0..ncols) |ci| {
+                const content = cell_bufs[ri * ncols + ci].items;
+                try writeTableCell(writer, content, col_widths[ci], col_aligns[ci]);
+                try writer.writeAll(ts.vertical);
+            }
+            try writer.writeByte('\n');
+
+            // Separator after header row: ├───┼───┤
+            if (ri == 0) {
+                try writeTableBorder(writer, col_widths, self.indent, ts, .mid);
+            }
+        }
+
+        // Bottom border: └───┴───┘
+        try writeTableBorder(writer, col_widths, self.indent, ts, .bottom);
+        try writer.writeByte('\n');
+    }
+
     // ── Inline Renderers ──────────────────────────────────────────────────────
 
     fn renderInline(self: *RenderContext, writer: anytype, node: *ast.Node) anyerror!void {
@@ -459,6 +578,69 @@ fn mergeStylePrimitive(parent: style.StylePrimitive, child: style.StylePrimitive
         .blink = child.blink orelse parent.blink,
         .format = if (child.format.len > 0) child.format else parent.format,
     };
+}
+
+const BorderType = enum { top, mid, bottom };
+
+/// Write a table horizontal border line using Unicode box-drawing characters.
+///   top: ┌───┬───┐
+///   mid: ├───┼───┤
+///   bot: └───┴───┘
+fn writeTableBorder(
+    writer: anytype,
+    col_widths: []const usize,
+    indent: usize,
+    ts: style.StyleTable,
+    border_type: BorderType,
+) !void {
+    const left = switch (border_type) {
+        .top => ts.top_left,
+        .mid => ts.left_mid,
+        .bottom => ts.bottom_left,
+    };
+    const right = switch (border_type) {
+        .top => ts.top_right,
+        .mid => ts.right_mid,
+        .bottom => ts.bottom_right,
+    };
+    const mid = switch (border_type) {
+        .top => ts.top_mid,
+        .mid => ts.mid_mid,
+        .bottom => ts.bottom_mid,
+    };
+
+    for (0..indent) |_| try writer.writeByte(' ');
+    try writer.writeAll(left);
+    for (col_widths, 0..) |w, i| {
+        var j: usize = 0;
+        while (j < w + 2) : (j += 1) try writer.writeAll(ts.horizontal);
+        if (i < col_widths.len - 1) try writer.writeAll(mid);
+    }
+    try writer.writeAll(right);
+    try writer.writeByte('\n');
+}
+
+/// Write a single table cell with alignment padding: ` content   `
+fn writeTableCell(
+    writer: anytype,
+    content: []const u8,
+    col_width: usize,
+    alignment: ast.Align,
+) !void {
+    const vis = ansi_util.visibleWidth(content);
+    const total_pad = if (col_width > vis) col_width - vis else 0;
+    const left_pad: usize = switch (alignment) {
+        .right => total_pad,
+        .center => total_pad / 2,
+        else => 0,
+    };
+    const right_pad: usize = total_pad - left_pad;
+
+    try writer.writeByte(' ');
+    for (0..left_pad) |_| try writer.writeByte(' ');
+    try writer.writeAll(content);
+    for (0..right_pad) |_| try writer.writeByte(' ');
+    try writer.writeByte(' ');
 }
 
 /// Write text with each line indented by `indent` spaces.
