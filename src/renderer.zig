@@ -88,11 +88,6 @@ const RenderContext = struct {
     fn renderHeading(self: *RenderContext, writer: anytype, node: *ast.Node) anyerror!void {
         const s = self.opts().styles;
         const use_kitty = self.opts().use_kitty_text_sizing;
-        const scale: usize = if (use_kitty) switch (node.level) {
-            1 => 3,
-            2 => 2,
-            else => 1,
-        } else 1;
 
         // Cascade: heading base + specific level style
         var heading_style = s.heading;
@@ -107,6 +102,12 @@ const RenderContext = struct {
         };
         // Merge: level-specific overrides heading base
         heading_style = mergeBlock(heading_style, level_style);
+
+        const scale: f32 = heading_style.scale orelse if (use_kitty) switch (node.level) {
+            1 => 3.0,
+            2 => 2.0,
+            else => 1.0,
+        } else 1.0;
 
         // Write prefix (unstyled from parent context)
         try ansi_util.writeStyled(writer, s.document.style, heading_style.style.block_prefix);
@@ -138,7 +139,7 @@ const RenderContext = struct {
         );
         defer self.allocator().free(wrapped);
 
-        if (scale > 1) {
+        if (scale > 1.0) {
             var it = std.mem.splitScalar(u8, wrapped, '\n');
             while (it.next()) |line| {
                 for (0..self.indent) |_| try writer.writeByte(' ');
@@ -155,7 +156,8 @@ const RenderContext = struct {
 
                 // Add extra newlines for the height of scaled text.
                 // We add scale - 1 newlines to account for the height.
-                for (0..scale - 1) |_| try writer.writeByte('\n');
+                const extra_lines: usize = @intFromFloat(@floor(scale - 0.001));
+                for (0..extra_lines) |_| try writer.writeByte('\n');
 
                 // If there's another line coming in the wrapped text, 
                 // we need one more newline to move to it.
@@ -546,6 +548,7 @@ fn mergeBlock(parent: style.StyleBlock, child: style.StyleBlock) style.StyleBloc
         .indent = child.indent orelse parent.indent,
         .indent_token = child.indent_token orelse parent.indent_token,
         .margin = child.margin orelse parent.margin,
+        .scale = child.scale orelse parent.scale,
     };
 }
 

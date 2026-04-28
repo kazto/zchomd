@@ -38,6 +38,7 @@ pub const StyleBlock = struct {
     indent: ?u32 = null,
     indent_token: ?[]const u8 = null,
     margin: ?u32 = null,
+    scale: ?f32 = null,
 };
 
 /// StyleCodeBlock holds style settings for fenced code blocks.
