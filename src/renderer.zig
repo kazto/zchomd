@@ -129,7 +129,10 @@ const RenderContext = struct {
 
         // Word-wrap and write
         const available_width = if (self.opts().word_wrap > self.indent) self.opts().word_wrap - self.indent else 0;
-        const wrap_width = available_width;
+        const wrap_width: usize = if (scale > 1.0)
+            @intFromFloat(@as(f32, @floatFromInt(available_width)) / scale)
+        else
+            available_width;
 
         const wrapped = try ansi_util.wordWrap(
             self.allocator(),
