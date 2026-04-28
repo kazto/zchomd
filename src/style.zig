@@ -138,7 +138,6 @@ pub const StyleConfig = struct {
 pub const dark: StyleConfig = .{
     .document = .{
         .style = .{
-            .block_prefix = "\n",
             .block_suffix = "\n",
             .color = "252",
         },
@@ -236,7 +235,6 @@ pub const dark: StyleConfig = .{
 pub const light: StyleConfig = .{
     .document = .{
         .style = .{
-            .block_prefix = "\n",
             .block_suffix = "\n",
             .color = "232",
         },

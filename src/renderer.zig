@@ -108,10 +108,6 @@ const RenderContext = struct {
         // Merge: level-specific overrides heading base
         heading_style = mergeBlock(heading_style, level_style);
 
-        if (!node.is_first) {
-            try writer.writeByte('\n');
-        }
-
         // Write prefix (unstyled from parent context)
         try ansi_util.writeStyled(writer, s.document.style, heading_style.style.block_prefix);
 
@@ -132,7 +128,7 @@ const RenderContext = struct {
 
         // Word-wrap and write
         const available_width = if (self.opts().word_wrap > self.indent) self.opts().word_wrap - self.indent else 0;
-        const wrap_width = if (scale > 1) available_width / scale else available_width;
+        const wrap_width = available_width;
 
         const wrapped = try ansi_util.wordWrap(
             self.allocator(),
@@ -143,23 +139,29 @@ const RenderContext = struct {
         defer self.allocator().free(wrapped);
 
         if (scale > 1) {
-            var lines = std.mem.splitScalar(u8, wrapped, '\n');
-            var first = true;
-            while (lines.next()) |line| {
-                if (!first or line.len > 0) {
-                    for (0..self.indent) |_| try writer.writeByte(' ');
+            var it = std.mem.splitScalar(u8, wrapped, '\n');
+            while (it.next()) |line| {
+                for (0..self.indent) |_| try writer.writeByte(' ');
 
-                    const plain = try ansi_util.stripAnsi(self.allocator(), line);
-                    defer self.allocator().free(plain);
+                const plain = try ansi_util.stripAnsi(self.allocator(), line);
+                defer self.allocator().free(plain);
 
-                    const had_codes = try ansi_util.writeOpen(writer, heading_style.style);
-                    try writer.print("\x1b]66;s={d};{s}\x07", .{ scale, plain });
-                    if (had_codes) try ansi_util.writeReset(writer);
+                const had_codes = try ansi_util.writeOpen(writer, heading_style.style);
+                // The OSC 66 sequence for scaling. Terminals that don't support it
+                // will ignore it.
+                try writer.print("\x1b]66;s={d};{s}\x07", .{ scale, plain });
+                
+                if (had_codes) try ansi_util.writeReset(writer);
 
-                    // Add extra newlines for the height of scaled text
-                    for (0..scale) |_| try writer.writeByte('\n');
+                // Add extra newlines for the height of scaled text.
+                // We add scale - 1 newlines to account for the height.
+                for (0..scale - 1) |_| try writer.writeByte('\n');
+
+                // If there's another line coming in the wrapped text, 
+                // we need one more newline to move to it.
+                if (it.rest().len > 0) {
+                    try writer.writeByte('\n');
                 }
-                first = false;
             }
         } else {
             try writeIndentedLines(writer, wrapped, self.indent);
@@ -170,10 +172,6 @@ const RenderContext = struct {
 
     fn renderParagraph(self: *RenderContext, writer: anytype, node: *ast.Node) anyerror!void {
         if (node.children.items.len == 0) return;
-
-        if (!node.is_first) {
-            try writer.writeByte('\n');
-        }
 
         const para_style = self.opts().styles.paragraph;
         _ = para_style;
@@ -217,8 +215,6 @@ const RenderContext = struct {
         const bq_style = self.opts().styles.block_quote;
         const indent_token = bq_style.indent_token orelse "│ ";
         const extra_indent = bq_style.indent orelse 0;
-
-        try writer.writeByte('\n');
 
         // Render children into a buffer, then prefix each line
         var buf = std.ArrayList(u8){};
@@ -330,7 +326,6 @@ const RenderContext = struct {
         const cb_style = self.opts().styles.code_block;
         const margin = cb_style.block.margin orelse 0;
 
-        try writer.writeByte('\n');
         var lines = std.mem.splitScalar(u8, node.text, '\n');
         while (lines.next()) |line| {
             for (0..self.indent + margin) |_| try writer.writeByte(' ');
@@ -420,8 +415,6 @@ const RenderContext = struct {
         }
 
         const ts = self.opts().styles.table;
-
-        try writer.writeByte('\n');
 
         // Top border: ┌───┬───┐
         try writeTableBorder(writer, col_widths, self.indent, ts, .top);
