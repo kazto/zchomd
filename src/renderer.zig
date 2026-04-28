@@ -103,11 +103,11 @@ const RenderContext = struct {
         // Merge: level-specific overrides heading base
         heading_style = mergeBlock(heading_style, level_style);
 
-        const scale: f32 = heading_style.scale orelse if (use_kitty) switch (node.level) {
+        const scale: f32 = if (use_kitty) (heading_style.scale orelse switch (node.level) {
             1 => 3.0,
             2 => 2.0,
             else => 1.0,
-        } else 1.0;
+        }) else 1.0;
 
         // Write prefix (unstyled from parent context)
         try ansi_util.writeStyled(writer, s.document.style, heading_style.style.block_prefix);
