@@ -161,7 +161,7 @@ pub const dark: StyleConfig = .{
     },
     .h1 = .{
         .style = .{
-            .prefix = " ",
+            .prefix = "# ",
             .suffix = " ",
             .color = "228",
             .background_color = "63",
@@ -218,7 +218,7 @@ pub const dark: StyleConfig = .{
     },
     .code = .{
         .style = .{
-            .prefix = " ",
+            .prefix = "# ",
             .suffix = " ",
             .color = "203",
             .background_color = "236",
@@ -257,7 +257,7 @@ pub const light: StyleConfig = .{
     },
     .h1 = .{
         .style = .{
-            .prefix = " ",
+            .prefix = "# ",
             .suffix = " ",
             .color = "228",
             .background_color = "69",
@@ -282,7 +282,7 @@ pub const light: StyleConfig = .{
     .image_text = .{ .color = "243", .format = "Image: {s} →" },
     .code = .{
         .style = .{
-            .prefix = " ",
+            .prefix = "# ",
             .suffix = " ",
             .color = "166",
             .background_color = "255",
