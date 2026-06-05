@@ -64,6 +64,26 @@ test "basic render" {
     try testing.expect(std.mem.containsAtLeast(u8, result, 1, "World"));
 }
 
+test "scaled heading emits a single OSC 66 sequence per line" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // The dark style applies fg/bg/bold SGR to H1. With text sizing on, the
+    // heading must still be ONE OSC 66 sequence — not one per word, which is
+    // what happens when the ANSI-styled buffer (not the plain text) is wrapped
+    // by byte length.
+    var tr = TermRenderer.init(allocator, .{
+        .styles = style.dark,
+        .word_wrap = 80,
+        .use_kitty_text_sizing = true,
+    });
+    const result = try tr.renderAlloc("# Heading Level One\n");
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, result, "\x1b]66;"));
+    try testing.expect(std.mem.containsAtLeast(u8, result, 1, "Heading Level One"));
+}
+
 test "emphasis and strong" {
     const testing = std.testing;
     const allocator = testing.allocator;

@@ -134,27 +134,27 @@ const RenderContext = struct {
         else
             available_width;
 
-        const wrapped = try ansi_util.wordWrap(
-            self.allocator(),
-            buf.items,
-            wrap_width,
-            0,
-        );
-        defer self.allocator().free(wrapped);
-
         if (scale > 1.0) {
+            // Wrap on the PLAIN text. The OSC 66 multicell carries unstyled
+            // text, and wordWrap measures raw byte length, so wrapping the
+            // ANSI-styled buffer counts the escape bytes and fragments the
+            // heading into one OSC 66 sequence per word (badly amplified by
+            // the /scale-reduced wrap width). Strip first, then wrap, so each
+            // wrapped line becomes a single OSC 66 sequence.
+            const plain_all = try ansi_util.stripAnsi(self.allocator(), buf.items);
+            defer self.allocator().free(plain_all);
+            const wrapped = try ansi_util.wordWrap(self.allocator(), plain_all, wrap_width, 0);
+            defer self.allocator().free(wrapped);
+
             var it = std.mem.splitScalar(u8, wrapped, '\n');
             while (it.next()) |line| {
                 for (0..self.indent) |_| try writer.writeByte(' ');
 
-                const plain = try ansi_util.stripAnsi(self.allocator(), line);
-                defer self.allocator().free(plain);
-
                 const had_codes = try ansi_util.writeOpen(writer, heading_style.style);
                 // The OSC 66 sequence for scaling. Terminals that don't support it
                 // will ignore it.
-                try writer.print("\x1b]66;s={d};{s}\x07", .{ scale, plain });
-                
+                try writer.print("\x1b]66;s={d};{s}\x07", .{ scale, line });
+
                 if (had_codes) try ansi_util.writeReset(writer);
 
                 // Add extra newlines for the height of scaled text.
@@ -162,13 +162,20 @@ const RenderContext = struct {
                 const extra_lines: usize = @intFromFloat(@floor(scale - 0.001));
                 for (0..extra_lines) |_| try writer.writeByte('\n');
 
-                // If there's another line coming in the wrapped text, 
+                // If there's another line coming in the wrapped text,
                 // we need one more newline to move to it.
                 if (it.rest().len > 0) {
                     try writer.writeByte('\n');
                 }
             }
         } else {
+            const wrapped = try ansi_util.wordWrap(
+                self.allocator(),
+                buf.items,
+                wrap_width,
+                0,
+            );
+            defer self.allocator().free(wrapped);
             try writeIndentedLines(writer, wrapped, self.indent);
         }
 
