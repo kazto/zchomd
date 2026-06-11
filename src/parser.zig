@@ -130,11 +130,11 @@ const Parser = struct {
         var text = line[level..];
         if (text.len > 0 and text[0] == ' ') text = text[1..];
         // Strip trailing '#' (closing sequence)
-        const trimmed = std.mem.trimRight(u8, text, " ");
+        const trimmed = std.mem.trimEnd(u8, text, " ");
         var end = trimmed.len;
         while (end > 0 and trimmed[end - 1] == '#') : (end -= 1) {}
         if (end < trimmed.len and (end == 0 or trimmed[end - 1] == ' ')) {
-            text = std.mem.trimRight(u8, trimmed[0..end], " ");
+            text = std.mem.trimEnd(u8, trimmed[0..end], " ");
         } else {
             text = trimmed;
         }
@@ -269,7 +269,7 @@ const Parser = struct {
 
         // Parse inline content of first line
         const para = try ast.Node.create(self.allocator, .paragraph);
-        try parseInlineChildren(self.allocator, para, std.mem.trimRight(u8, content, " \t\r"));
+        try parseInlineChildren(self.allocator, para, std.mem.trimEnd(u8, content, " \t\r"));
         try item_node.appendChild(self.allocator, para);
 
         // Parse continuation lines
@@ -321,7 +321,7 @@ const Parser = struct {
         }
 
         const all_code = try code_buf.toOwnedSlice(self.allocator);
-        const trimmed = std.mem.trimRight(u8, all_code, "\n");
+        const trimmed = std.mem.trimEnd(u8, all_code, "\n");
 
         const node = try ast.Node.create(self.allocator, .code_block);
         node.text = try self.allocator.dupe(u8, trimmed);
@@ -343,7 +343,7 @@ const Parser = struct {
             if (isBlockquote(stripped)) break;
 
             if (text_buf.items.len > 0) {
-                const prev = std.mem.trimRight(u8, text_buf.items, " ");
+                const prev = std.mem.trimEnd(u8, text_buf.items, " ");
                 const trailing_spaces = text_buf.items.len - prev.len;
                 if (trailing_spaces >= 2) {
                     text_buf.items.len = prev.len;
@@ -356,7 +356,7 @@ const Parser = struct {
                     }
                 }
             }
-            try text_buf.appendSlice(self.allocator, std.mem.trimRight(u8, stripped, " \t\r"));
+            try text_buf.appendSlice(self.allocator, std.mem.trimEnd(u8, stripped, " \t\r"));
             self.advance();
         }
 
@@ -716,12 +716,12 @@ const InlineParser = struct {
         var title: []const u8 = "";
 
         if (std.mem.indexOfScalar(u8, dest_raw, '"')) |ti| {
-            url = std.mem.trimRight(u8, dest_raw[0..ti], " ");
+            url = std.mem.trimEnd(u8, dest_raw[0..ti], " ");
             const title_start = ti + 1;
             const title_end = std.mem.lastIndexOfScalar(u8, dest_raw, '"') orelse dest_raw.len;
             if (title_end > title_start) title = dest_raw[title_start..title_end];
         } else if (std.mem.indexOfScalar(u8, dest_raw, '\'')) |ti| {
-            url = std.mem.trimRight(u8, dest_raw[0..ti], " ");
+            url = std.mem.trimEnd(u8, dest_raw[0..ti], " ");
             const title_start = ti + 1;
             const title_end = std.mem.lastIndexOfScalar(u8, dest_raw, '\'') orelse dest_raw.len;
             if (title_end > title_start) title = dest_raw[title_start..title_end];
@@ -793,7 +793,7 @@ fn isThematicBreak(line: []const u8) bool {
 }
 
 fn headingLevel(line: []const u8) ?u8 {
-    const s = std.mem.trimLeft(u8, line, " ");
+    const s = std.mem.trimStart(u8, line, " ");
     if (s.len == 0 or s[0] != '#') return null;
     var level: u8 = 0;
     while (level < s.len and s[level] == '#' and level < 6) : (level += 1) {}
@@ -803,7 +803,7 @@ fn headingLevel(line: []const u8) ?u8 {
 }
 
 fn isFencedCodeFence(line: []const u8) bool {
-    const s = std.mem.trimLeft(u8, line, " ");
+    const s = std.mem.trimStart(u8, line, " ");
     if (s.len < 3) return false;
     const c = s[0];
     if (c != '`' and c != '~') return false;
@@ -820,12 +820,12 @@ fn isClosingFence(line: []const u8, fence_char: u8, min_len: usize) bool {
 }
 
 fn isBlockquote(line: []const u8) bool {
-    const s = std.mem.trimLeft(u8, line, " ");
+    const s = std.mem.trimStart(u8, line, " ");
     return s.len > 0 and s[0] == '>';
 }
 
 fn blockquoteContent(line: []const u8) []const u8 {
-    const s = std.mem.trimLeft(u8, line, " ");
+    const s = std.mem.trimStart(u8, line, " ");
     if (s.len == 0 or s[0] != '>') return line;
     if (s.len > 1 and s[1] == ' ') return s[2..];
     return s[1..];
@@ -902,7 +902,7 @@ fn tableCellSplit(line: []const u8) []const u8 {
 }
 
 fn listMarker(line: []const u8) ?MarkerInfo {
-    const s = std.mem.trimLeft(u8, line, " \t");
+    const s = std.mem.trimStart(u8, line, " \t");
     if (s.len == 0) return null;
 
     const leading = line.len - s.len;

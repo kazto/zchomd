@@ -24,13 +24,13 @@ pub const TermRenderer = struct {
         const doc = try parser.parse(self.allocator, input);
         defer doc.destroy(self.allocator);
 
-        var buf: std.ArrayList(u8) = .empty;
-        errdefer buf.deinit(self.allocator);
+        var buf = std.Io.Writer.Allocating.init(self.allocator);
+        errdefer buf.deinit();
 
         var r = renderer.Renderer.init(self.allocator, self.opts);
-        try r.render(buf.writer(self.allocator), doc);
+        try r.render(&buf.writer, doc);
 
-        return buf.toOwnedSlice(self.allocator);
+        return buf.toOwnedSlice();
     }
 
     /// Render `input` Markdown and write to `writer`.

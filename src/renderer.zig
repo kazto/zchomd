@@ -113,18 +113,18 @@ const RenderContext = struct {
         try ansi_util.writeStyled(writer, s.document.style, heading_style.style.block_prefix);
 
         // Write optional level prefix (e.g. "## ")
-        var buf = std.ArrayList(u8){};
-        defer buf.deinit(self.allocator());
+        var buf = std.Io.Writer.Allocating.init(self.allocator());
+        defer buf.deinit();
 
         // Render inline children into buffer
         if (heading_style.style.prefix.len > 0) {
-            try ansi_util.writeStyled(buf.writer(self.allocator()), heading_style.style, heading_style.style.prefix);
+            try ansi_util.writeStyled(&buf.writer, heading_style.style, heading_style.style.prefix);
         }
         for (node.children.items) |child| {
-            try self.renderInlineToWriter(buf.writer(self.allocator()), child, heading_style.style);
+            try self.renderInlineToWriter(&buf.writer, child, heading_style.style);
         }
         if (heading_style.style.suffix.len > 0) {
-            try ansi_util.writeStyled(buf.writer(self.allocator()), heading_style.style, heading_style.style.suffix);
+            try ansi_util.writeStyled(&buf.writer, heading_style.style, heading_style.style.suffix);
         }
 
         // Word-wrap and write
@@ -141,12 +141,12 @@ const RenderContext = struct {
             // heading into one OSC 66 sequence per word (badly amplified by
             // the /scale-reduced wrap width). Strip first, then wrap, so each
             // wrapped line becomes a single OSC 66 sequence.
-            const plain_all = try ansi_util.stripAnsi(self.allocator(), buf.items);
+            const plain_all = try ansi_util.stripAnsi(self.allocator(), buf.writer.buffered());
             defer self.allocator().free(plain_all);
-            const wrapped = try ansi_util.wordWrap(self.allocator(), plain_all, wrap_width, 0);
-            defer self.allocator().free(wrapped);
+            const scaled_wrapped = try ansi_util.wordWrap(self.allocator(), plain_all, wrap_width, 0);
+            defer self.allocator().free(scaled_wrapped);
 
-            var it = std.mem.splitScalar(u8, wrapped, '\n');
+            var it = std.mem.splitScalar(u8, scaled_wrapped, '\n');
             while (it.next()) |line| {
                 for (0..self.indent) |_| try writer.writeByte(' ');
 
@@ -171,7 +171,7 @@ const RenderContext = struct {
         } else {
             const wrapped = try ansi_util.wordWrap(
                 self.allocator(),
-                buf.items,
+                buf.writer.buffered(),
                 wrap_width,
                 0,
             );
@@ -188,14 +188,14 @@ const RenderContext = struct {
         const para_style = self.opts().styles.paragraph;
         _ = para_style;
 
-        var buf = std.ArrayList(u8){};
-        defer buf.deinit(self.allocator());
+        var buf = std.Io.Writer.Allocating.init(self.allocator());
+        defer buf.deinit();
 
         for (node.children.items) |child| {
-            try self.renderInlineToWriter(buf.writer(self.allocator()), child, self.opts().styles.text);
+            try self.renderInlineToWriter(&buf.writer, child, self.opts().styles.text);
         }
 
-        const raw = buf.items;
+        const raw = buf.writer.buffered();
         const text = if (self.opts().preserve_newlines)
             try self.allocator().dupe(u8, raw)
         else blk: {
@@ -229,18 +229,18 @@ const RenderContext = struct {
         const extra_indent = bq_style.indent orelse 0;
 
         // Render children into a buffer, then prefix each line
-        var buf = std.ArrayList(u8){};
-        defer buf.deinit(self.allocator());
+        var buf = std.Io.Writer.Allocating.init(self.allocator());
+        defer buf.deinit();
 
         const old_indent = self.indent;
         self.indent += extra_indent + indent_token.len;
         for (node.children.items) |child| {
-            try self.renderNode(buf.writer(self.allocator()), child);
+            try self.renderNode(&buf.writer, child);
         }
         self.indent = old_indent;
 
         // Prefix each line with the indent_token
-        var lines = std.mem.splitScalar(u8, buf.items, '\n');
+        var lines = std.mem.splitScalar(u8, buf.writer.buffered(), '\n');
         var first_line = true;
         while (lines.next()) |line| {
             if (first_line and line.len == 0) {
@@ -299,12 +299,12 @@ const RenderContext = struct {
                 .paragraph => {
                     if (first_para) {
                         // Render inline on same line as marker
-                        var buf = std.ArrayList(u8){};
-                        defer buf.deinit(self.allocator());
+                        var buf = std.Io.Writer.Allocating.init(self.allocator());
+                        defer buf.deinit();
                         for (child.children.items) |inline_child| {
-                            try self.renderInlineToWriter(buf.writer(self.allocator()), inline_child, s.text);
+                            try self.renderInlineToWriter(&buf.writer, inline_child, s.text);
                         }
-                        const trimmed = std.mem.trim(u8, buf.items, " ");
+                        const trimmed = std.mem.trim(u8, buf.writer.buffered(), " ");
                         try writer.writeAll(trimmed);
                         try writer.writeByte('\n');
                         first_para = false;
@@ -382,12 +382,12 @@ const RenderContext = struct {
 
         // Render every cell's inline content to a flat string array.
         // Index: ri * ncols + ci
-        const cell_bufs = try alloc.alloc(std.ArrayList(u8), nrows * ncols);
+        const cell_bufs = try alloc.alloc(std.Io.Writer.Allocating, nrows * ncols);
         defer {
-            for (cell_bufs) |*b| b.deinit(alloc);
+            for (cell_bufs) |*b| b.deinit();
             alloc.free(cell_bufs);
         }
-        for (cell_bufs) |*b| b.* = .empty;
+        for (cell_bufs) |*b| b.* = std.Io.Writer.Allocating.init(alloc);
 
         for (node.children.items, 0..) |row_node, ri| {
             for (row_node.children.items, 0..) |cell, ci| {
@@ -400,7 +400,7 @@ const RenderContext = struct {
                     self.opts().styles.text;
                 for (cell.children.items) |inline_child| {
                     try self.renderInlineToWriter(
-                        cell_bufs[idx].writer(alloc),
+                        &cell_bufs[idx].writer,
                         inline_child,
                         text_style,
                     );
@@ -414,7 +414,7 @@ const RenderContext = struct {
         @memset(col_widths, 3); // minimum 3
         for (0..nrows) |ri| {
             for (0..ncols) |ci| {
-                const w = ansi_util.visibleWidth(cell_bufs[ri * ncols + ci].items);
+                const w = ansi_util.visibleWidth(cell_bufs[ri * ncols + ci].writer.buffered());
                 if (w > col_widths[ci]) col_widths[ci] = w;
             }
         }
@@ -436,7 +436,7 @@ const RenderContext = struct {
             for (0..self.indent) |_| try writer.writeByte(' ');
             try writer.writeAll(ts.vertical);
             for (0..ncols) |ci| {
-                const content = cell_bufs[ri * ncols + ci].items;
+                const content = cell_bufs[ri * ncols + ci].writer.buffered();
                 try writeTableCell(writer, content, col_widths[ci], col_aligns[ci]);
                 try writer.writeAll(ts.vertical);
             }
@@ -519,7 +519,7 @@ const RenderContext = struct {
                 const img_s = s.image_text;
                 if (img_s.format.len > 0) {
                     // Simple format substitution: replace {s} with alt text
-                    var out = std.ArrayList(u8){};
+                    var out: std.ArrayList(u8) = .empty;
                     defer out.deinit(self.allocator());
                     var fmt_rest = img_s.format;
                     while (std.mem.indexOf(u8, fmt_rest, "{s}")) |idx| {

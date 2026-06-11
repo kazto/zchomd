@@ -65,7 +65,7 @@ pub const Node = struct {
     // Whether this node is the first child of its parent
     is_first: bool = false,
 
-    children: std.ArrayListUnmanaged(*Node) = .{},
+    children: std.ArrayListUnmanaged(*Node) = .empty,
 
     /// Allocate and initialize a new node.
     pub fn create(allocator: std.mem.Allocator, kind: NodeKind) !*Node {

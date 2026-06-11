@@ -2,28 +2,24 @@
 const std = @import("std");
 const zchomd = @import("zchomd");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var stdout_buf: [4096]u8 = undefined;
-    var stdout_file = std.fs.File.stdout();
-    var stdout_writer = stdout_file.writer(&stdout_buf);
+    var stdout_file = std.Io.File.stdout();
+    var stdout_writer = stdout_file.writer(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
     var stderr_buf: [1024]u8 = undefined;
-    var stderr_file = std.fs.File.stderr();
-    var stderr_writer = stderr_file.writer(&stderr_buf);
+    var stderr_file = std.Io.File.stderr();
+    var stderr_writer = stderr_file.writer(io, &stderr_buf);
     const stderr = &stderr_writer.interface;
 
     // Determine style from GLAMOUR_STYLE env var, default "dark"
-    const env_style = std.process.getEnvVarOwned(allocator, "GLAMOUR_STYLE") catch
-        try allocator.dupe(u8, "dark");
-    defer allocator.free(env_style);
+    const env_style = init.environ_map.get("GLAMOUR_STYLE") orelse "dark";
 
     const style_cfg = zchomd.style.getStandardStyle(env_style) orelse zchomd.style.dark;
 
@@ -31,7 +27,9 @@ pub fn main() !void {
 
     if (args.len < 2) {
         // Read from stdin
-        const input = try std.fs.File.stdin().readToEndAlloc(allocator, 10 * 1024 * 1024);
+        var input_reader_buf: [4096]u8 = undefined;
+        var input_reader = std.Io.File.stdin().reader(io, &input_reader_buf);
+        const input = try input_reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024));
         defer allocator.free(input);
 
         try tr.render(stdout, input);
@@ -55,13 +53,15 @@ pub fn main() !void {
             return;
         }
 
-        const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| {
             try stderr.print("zchomd: cannot open '{s}': {}\n", .{ path, err });
             continue;
         };
-        defer file.close();
+        defer file.close(io);
 
-        const input = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
+        var input_reader_buf: [4096]u8 = undefined;
+        var input_reader = file.reader(io, &input_reader_buf);
+        const input = try input_reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024));
         defer allocator.free(input);
 
         try tr.render(stdout, input);
