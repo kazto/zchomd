@@ -169,14 +169,14 @@ const RenderContext = struct {
                 }
             }
         } else {
-            const wrapped = try ansi_util.wordWrap(
+            const wrapped_plain = try ansi_util.wordWrap(
                 self.allocator(),
                 buf.writer.buffered(),
                 wrap_width,
                 0,
             );
-            defer self.allocator().free(wrapped);
-            try writeIndentedLines(writer, wrapped, self.indent);
+            defer self.allocator().free(wrapped_plain);
+            try writeIndentedLines(writer, wrapped_plain, self.indent);
         }
 
         try ansi_util.writeStyled(writer, s.document.style, heading_style.style.block_suffix);
