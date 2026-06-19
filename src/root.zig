@@ -199,3 +199,94 @@ test "thematic break" {
     try testing.expect(std.mem.containsAtLeast(u8, result, 1, "Before"));
     try testing.expect(std.mem.containsAtLeast(u8, result, 1, "After"));
 }
+
+test "osc8: http link emits OSC 8 hyperlink around link text" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tr = TermRenderer.init(allocator, .{ .styles = style.notty, .enable_osc8 = true });
+    const result = try tr.renderAlloc("[Zig](https://ziglang.org)\n");
+    defer allocator.free(result);
+
+    const open_seq = "\x1b]8;;https://ziglang.org\x07";
+    const close_seq = "\x1b]8;;\x07";
+
+    const open_pos = std.mem.indexOf(u8, result, open_seq) orelse
+        return error.TestUnexpectedResult;
+    const close_pos = std.mem.indexOf(u8, result, close_seq) orelse
+        return error.TestUnexpectedResult;
+    const zig_pos = std.mem.indexOf(u8, result, "Zig") orelse
+        return error.TestUnexpectedResult;
+
+    try testing.expect(open_pos < zig_pos);
+    try testing.expect(zig_pos < close_pos + close_seq.len);
+    try testing.expect(std.mem.containsAtLeast(u8, result, 1, "https://ziglang.org"));
+}
+
+test "osc8: local path link does not emit OSC 8" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tr = TermRenderer.init(allocator, .{ .styles = style.notty, .enable_osc8 = true });
+    const result = try tr.renderAlloc("[docs](./another.md)\n");
+    defer allocator.free(result);
+
+    try testing.expect(!std.mem.containsAtLeast(u8, result, 1, "\x1b]8;"));
+    try testing.expect(std.mem.containsAtLeast(u8, result, 1, "docs"));
+}
+
+test "osc8: enable_osc8=false does not emit OSC 8 for http link" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tr = TermRenderer.init(allocator, .{ .styles = style.notty, .enable_osc8 = false });
+    const result = try tr.renderAlloc("[Zig](https://ziglang.org)\n");
+    defer allocator.free(result);
+
+    try testing.expect(!std.mem.containsAtLeast(u8, result, 1, "\x1b]8;"));
+}
+
+test "osc8: auto_link with https emits OSC 8" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tr = TermRenderer.init(allocator, .{ .styles = style.notty, .enable_osc8 = true });
+    const result = try tr.renderAlloc("<https://ziglang.org>\n");
+    defer allocator.free(result);
+
+    const open_seq = "\x1b]8;;https://ziglang.org\x07";
+    const close_seq = "\x1b]8;;\x07";
+
+    const open_pos = std.mem.indexOf(u8, result, open_seq) orelse
+        return error.TestUnexpectedResult;
+    const close_pos = std.mem.indexOf(u8, result, close_seq) orelse
+        return error.TestUnexpectedResult;
+    const url_pos = std.mem.indexOf(u8, result, "https://ziglang.org") orelse
+        return error.TestUnexpectedResult;
+
+    try testing.expect(open_pos < url_pos);
+    try testing.expect(url_pos < close_pos + close_seq.len);
+}
+
+test "osc8: auto_link with enable_osc8=false does not emit OSC 8" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tr = TermRenderer.init(allocator, .{ .styles = style.notty, .enable_osc8 = false });
+    const result = try tr.renderAlloc("<https://ziglang.org>\n");
+    defer allocator.free(result);
+
+    try testing.expect(!std.mem.containsAtLeast(u8, result, 1, "\x1b]8;"));
+    try testing.expect(std.mem.containsAtLeast(u8, result, 1, "https://ziglang.org"));
+}
+
+test "osc8: auto_link with non-http scheme does not emit OSC 8" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tr = TermRenderer.init(allocator, .{ .styles = style.notty, .enable_osc8 = true });
+    const result = try tr.renderAlloc("<mailto:foo@example.com>\n");
+    defer allocator.free(result);
+
+    try testing.expect(!std.mem.containsAtLeast(u8, result, 1, "\x1b]8;"));
+}

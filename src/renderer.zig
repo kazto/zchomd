@@ -10,7 +10,13 @@ pub const Options = struct {
     word_wrap: usize = 80,
     preserve_newlines: bool = false,
     use_kitty_text_sizing: bool = false,
+    enable_osc8: bool = false,
 };
+
+fn isHttpUrl(url: []const u8) bool {
+    return std.mem.startsWith(u8, url, "http://") or
+        std.mem.startsWith(u8, url, "https://");
+}
 
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
@@ -502,12 +508,17 @@ const RenderContext = struct {
                 try ansi_util.writeStyled(writer, code_s, code_s.suffix);
             },
             .link => {
-                // Render link text in link_text style
                 const lt_style = mergeStylePrimitive(parent_style, s.link_text);
+                const use_osc8 = self.opts().enable_osc8 and node.url.len > 0 and isHttpUrl(node.url);
+                if (use_osc8) {
+                    try writer.print("\x1b]8;;{s}\x07", .{node.url});
+                }
                 for (node.children.items) |child| {
                     try self.renderInlineToWriter(writer, child, lt_style);
                 }
-                // Render URL in link style
+                if (use_osc8) {
+                    try writer.writeAll("\x1b]8;;\x07");
+                }
                 if (node.url.len > 0) {
                     try writer.writeAll(" (");
                     try ansi_util.writeStyled(writer, s.link, node.url);
@@ -538,7 +549,13 @@ const RenderContext = struct {
                 }
             },
             .auto_link => {
-                try ansi_util.writeStyled(writer, s.link, node.url);
+                if (self.opts().enable_osc8 and node.url.len > 0 and isHttpUrl(node.url)) {
+                    try writer.print("\x1b]8;;{s}\x07", .{node.url});
+                    try ansi_util.writeStyled(writer, s.link, node.url);
+                    try writer.writeAll("\x1b]8;;\x07");
+                } else {
+                    try ansi_util.writeStyled(writer, s.link, node.url);
+                }
             },
             .raw_html => {
                 // Strip HTML tags; output text content only
